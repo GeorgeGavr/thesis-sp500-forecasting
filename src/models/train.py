@@ -9,23 +9,37 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
 
-def load_series(csv_path: str) -> pd.Series:
-    df = pd.read_csv(csv_path, parse_dates=["Date"])  # columns: Date, Close
+def load_and_prepare_data(csv_path: str) -> Tuple[np.ndarray, dict]:
+    """Load prices and convert to stationary log returns."""
+    df = pd.read_csv(csv_path, parse_dates=["Date"])
     df = df.sort_values("Date")
-    return df["Close"].astype(float)
-
-
-def compute_log_returns(prices: np.ndarray) -> np.ndarray:
-    """Convert prices to log returns: ln(P_t / P_{t-1})."""
+    prices = df["Close"].values
+    
+    # Compute log returns (stationary transformation)
     log_returns = np.log(prices[1:] / prices[:-1])
-    return log_returns
+    
+    stats = {
+        'n_prices': len(prices),
+        'n_returns': len(log_returns),
+        'mean': float(log_returns.mean()),
+        'std': float(log_returns.std()),
+    }
+    
+    return log_returns, stats
 
 
-def make_sequences(values: np.ndarray, seq_len: int) -> Tuple[np.ndarray, np.ndarray]:
+def make_sequences(values: np.ndarray, seq_len: int, forecast_horizon: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+    """Create sequences for prediction.
+    
+    Args:
+        values: Input time series
+        seq_len: Length of input sequence
+        forecast_horizon: Number of steps ahead to predict (default: 1 for next-day)
+    """
     X, y = [], []
-    for i in range(len(values) - seq_len):
+    for i in range(len(values) - seq_len - forecast_horizon + 1):
         X.append(values[i : i + seq_len])
-        y.append(values[i + seq_len])
+        y.append(values[i + seq_len + forecast_horizon - 1])
     return np.array(X), np.array(y)
 
 
@@ -72,23 +86,32 @@ def main():
 
     # Hyperparameters
     seq_len = 60
+    forecast_horizon = 5  # Predict 5 days ahead (weekly)
     batch_size = 64
-    epochs = 10
+    epochs = 20  # Increased epochs for better convergence
     lr = 1e-3
-    weight_decay_rate = 0.001  # Temporal weighting: higher = more emphasis on recent years
+    weight_decay_rate = 0.0001  # Reduced temporal weighting (was 0.001)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    print(f"Configuration:")
+    print(f"  Sequence length: {seq_len} days")
+    print(f"  Forecast horizon: {forecast_horizon} days")
+    print(f"  Temporal decay rate: {weight_decay_rate}")
+    print(f"  Device: {device}")
+    print()
 
-    # Load prices and convert to log returns
-    prices = load_series(data_csv).values
-    log_returns = compute_log_returns(prices)
+    # Load and prepare data (prices → stationary log returns)
+    log_returns, data_stats = load_and_prepare_data(data_csv)
+    print(f"Data: {data_stats['n_returns']} log returns (mean={data_stats['mean']:.6f}, std={data_stats['std']:.6f})")
     
     # Standardize log returns (z-score normalization)
     scaler = StandardScaler()
     scaled = scaler.fit_transform(log_returns.reshape(-1, 1)).astype(np.float32).flatten()
 
     # Sequences
-    X, y = make_sequences(scaled, seq_len)
+    X, y = make_sequences(scaled, seq_len, forecast_horizon)
     n = len(X)
+    print(f"Created {n} sequences (predicting {forecast_horizon} days ahead)")
     n_train = int(n * 0.8)
     n_val = int(n * 0.1)
 
@@ -164,10 +187,14 @@ def main():
     test_loss = evaluate(test_dl)
     print(f"Test MSE: {test_loss:.6f}")
 
-    # Save model
+    # Save model with metadata
     model_path = os.path.join(models_dir, "sp500_lstm.pt")
     torch.save({
         "state_dict": model.state_dict(),
+        "seq_len": seq_len,
+        "forecast_horizon": forecast_horizon,
+        "scaler_mean": scaler.mean_[0],
+        "scaler_scale": scaler.scale_[0],
     }, model_path)
     print(f"Saved model to {model_path}")
 
