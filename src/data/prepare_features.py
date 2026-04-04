@@ -134,10 +134,13 @@ def prepare_dataset(
     end_date: str = None
 ) -> Tuple[pd.DataFrame, dict]:
     """
-    Load raw price data and prepare enhanced feature set.
+    Load price data and prepare enhanced feature set.
+    
+    Note: If the data was processed by download_sp500.py, it will already
+    contain log_return and possibly differenced_log_return columns.
     
     Args:
-        csv_path: Path to raw sp500_close.csv
+        csv_path: Path to sp500_close.csv (already transformed)
         output_path: Path to save processed features
         start_date: Optional start date filter (YYYY-MM-DD)
         end_date: Optional end date filter (YYYY-MM-DD)
@@ -157,8 +160,13 @@ def prepare_dataset(
     if end_date:
         df = df[df['Date'] <= end_date]
     
-    # Compute log returns (target variable)
-    df['log_return'] = compute_log_returns(df['Close'])
+    # Check if log_return already exists (from download_sp500.py)
+    # If not, compute it
+    if 'log_return' not in df.columns:
+        print("Computing log returns...")
+        df['log_return'] = compute_log_returns(df['Close'])
+    else:
+        print("Using pre-computed log returns from data")
     
     print("Computing technical indicators...")
     df = add_technical_indicators(df)

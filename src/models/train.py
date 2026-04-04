@@ -9,23 +9,47 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
 
-def load_and_prepare_data(csv_path: str) -> Tuple[np.ndarray, dict]:
-    """Load prices and convert to stationary log returns."""
+def load_and_prepare_data(csv_path: str, metadata_path: str = None) -> Tuple[np.ndarray, dict]:
+    """
+    Load stationary returns from preprocessed data.
+    
+    The data is already transformed by download_sp500.py:
+    - Either log_return (if stationary) OR
+    - differenced_log_return (if log returns were non-stationary)
+    """
     df = pd.read_csv(csv_path, parse_dates=["Date"])
     df = df.sort_values("Date")
-    prices = df["Close"].values
     
-    # Compute log returns (stationary transformation)
-    log_returns = np.log(prices[1:] / prices[:-1])
+    # Load metadata to determine which column to use
+    if metadata_path and os.path.exists(metadata_path):
+        import json
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        use_column = metadata.get('use_column', 'log_return')
+        transformation = metadata.get('final_transformation', 'log_returns')
+    else:
+        # Fallback: check if differenced column exists
+        if 'differenced_log_return' in df.columns:
+            use_column = 'differenced_log_return'
+            transformation = 'differenced_log_returns'
+        elif 'log_return' in df.columns:
+            use_column = 'log_return'
+            transformation = 'log_returns'
+        else:
+            raise ValueError("No transformed column found. Run download_sp500.py first.")
+    
+    returns = df[use_column].values
     
     stats = {
-        'n_prices': len(prices),
-        'n_returns': len(log_returns),
-        'mean': float(log_returns.mean()),
-        'std': float(log_returns.std()),
+        'n_observations': len(df),
+        'n_returns': len(returns),
+        'transformation': transformation,
+        'column_used': use_column,
+        'mean': float(returns.mean()),
+        'std': float(returns.std()),
     }
     
-    return log_returns, stats
+    return returns, stats
 
 
 def make_sequences(values: np.ndarray, seq_len: int, forecast_horizon: int = 1) -> Tuple[np.ndarray, np.ndarray]:
@@ -81,6 +105,7 @@ def main():
     # Resolve paths
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     data_csv = os.path.join(root_dir, "data", "sp500_close.csv")
+    metadata_json = os.path.join(root_dir, "data", "transformation_metadata.json")
     models_dir = os.path.join(root_dir, "models")
     os.makedirs(models_dir, exist_ok=True)
 
@@ -100,13 +125,16 @@ def main():
     print(f"  Device: {device}")
     print()
 
-    # Load and prepare data (prices → stationary log returns)
-    log_returns, data_stats = load_and_prepare_data(data_csv)
-    print(f"Data: {data_stats['n_returns']} log returns (mean={data_stats['mean']:.6f}, std={data_stats['std']:.6f})")
+    # Load and prepare data (already transformed and tested for stationarity)
+    returns, data_stats = load_and_prepare_data(data_csv, metadata_json)
+    print(f"Data: {data_stats['n_returns']} observations")
+    print(f"  Transformation: {data_stats['transformation']}")
+    print(f"  Using column: {data_stats['column_used']}")
+    print(f"  Mean: {data_stats['mean']:.6f}, Std: {data_stats['std']:.6f}")
     
-    # Standardize log returns (z-score normalization)
+    # Standardize returns (z-score normalization)
     scaler = StandardScaler()
-    scaled = scaler.fit_transform(log_returns.reshape(-1, 1)).astype(np.float32).flatten()
+    scaled = scaler.fit_transform(returns.reshape(-1, 1)).astype(np.float32).flatten()
 
     # Sequences
     X, y = make_sequences(scaled, seq_len, forecast_horizon)
