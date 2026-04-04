@@ -41,8 +41,5 @@ htmlcov/
 .idea/
 .vscode/
 
-# Models
-models/*.pt
-
 # Development documentation (local only)
 DEVELOPMENT_SUMMARY.md
