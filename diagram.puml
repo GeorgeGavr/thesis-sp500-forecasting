@@ -1,0 +1,26 @@
+@startuml
+' --- Οριζόντια Διάταξη ---
+left to right direction
+skinparam defaultTextAlignment center
+skinparam arrowColor #333333
+skinparam defaultFontSize 14
+skinparam ranksep 25
+skinparam padding 12
+
+' --- Ορισμός Σχημάτων (Όλα ως ορθογώνια για απόλυτη ευθυγράμμιση) ---
+rectangle "<b>1. Ακατέργαστα Δεδομένα</b>\nS&P 500 (2015-Σήμερα)" as A #f9f9f9
+rectangle "<b>2. Μηχανική Χαρακτηριστικών</b>\nΛογαρ. Αποδόσεις" as B #e1f5fe
+rectangle "<b>3. Κανονικοποίηση</b>\nStandardScaler" as C #e1f5fe
+rectangle "<b>4. Δημιουργία Ακολουθιών</b>\nΠαράθυρο 10 ημερών" as D #e1f5fe
+rectangle "<b>5. Bi-LSTM & Attention</b>\nΑμφίδρομο Δίκτυο" as E #e8f5e9
+rectangle "<b>6. Βελτιστοποίηση Κατωφλίου</b>\nΔιάμεση Πιθανότητα" as F #fff3e0
+rectangle "<b>7. Τελική Πρόβλεψη</b>\n0: Πτώση, 1: Άνοδος" as G #ffebee
+
+' --- Ροή (Μόνο δεξιά) ---
+A -> B
+B -> C
+C -> D
+D -> E
+E -> F
+F -> G
+@enduml

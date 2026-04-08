@@ -1,0 +1,100 @@
+{
+  "transformation_steps": [
+    "log_returns"
+  ],
+  "stationarity_tests": {
+    "raw_prices": {
+      "series_name": "Raw Prices",
+      "adf": {
+        "test": "ADF",
+        "statistic": 7.270752471571001,
+        "p_value": 1.0,
+        "used_lag": 47,
+        "n_obs": 24533,
+        "critical_values": {
+          "1%": -3.4306165790711787,
+          "5%": -2.861657819779497,
+          "10%": -2.566832712040877
+        },
+        "is_stationary": false,
+        "significance_level": 0.05,
+        "interpretation": "Non-stationary (p=1.000000)"
+      },
+      "kpss": {
+        "test": "KPSS",
+        "statistic": 15.114398001367224,
+        "p_value": 0.01,
+        "used_lag": 93,
+        "critical_values": {
+          "10%": 0.347,
+          "5%": 0.463,
+          "2.5%": 0.574,
+          "1%": 0.739
+        },
+        "is_stationary": false,
+        "significance_level": 0.05,
+        "interpretation": "Non-stationary (p=0.010000)"
+      },
+      "final_decision": "non-stationary",
+      "recommendation": "Series is non-stationary - apply differencing",
+      "statistics": {
+        "mean": 705.9219001216422,
+        "std": 1194.46110151743,
+        "min": 4.400000095367432,
+        "max": 6890.89013671875,
+        "n": 24581
+      }
+    },
+    "log_returns": {
+      "series_name": "Log Returns",
+      "adf": {
+        "test": "ADF",
+        "statistic": -22.6016846848227,
+        "p_value": 0.0,
+        "used_lag": 48,
+        "n_obs": 24531,
+        "critical_values": {
+          "1%": -3.43061660080751,
+          "5%": -2.861657829385858,
+          "10%": -2.5668327171541385
+        },
+        "is_stationary": true,
+        "significance_level": 0.05,
+        "interpretation": "Stationary (p=0.000000)"
+      },
+      "kpss": {
+        "test": "KPSS",
+        "statistic": 0.23619461374611758,
+        "p_value": 0.1,
+        "used_lag": 18,
+        "critical_values": {
+          "10%": 0.347,
+          "5%": 0.463,
+          "2.5%": 0.574,
+          "1%": 0.739
+        },
+        "is_stationary": true,
+        "significance_level": 0.05,
+        "interpretation": "Stationary (p=0.100000)"
+      },
+      "final_decision": "stationary",
+      "recommendation": "Series is stationary - can use as is",
+      "statistics": {
+        "mean": 0.0002417758293363047,
+        "std": 0.01195621269011899,
+        "min": -0.22899728603345354,
+        "max": 0.15366128879080518,
+        "n": 24580
+      }
+    }
+  },
+  "transformation": "log_returns",
+  "output_shape": [
+    24580,
+    3
+  ],
+  "date_range": [
+    "1928-01-03 00:00:00",
+    "2025-11-07 00:00:00"
+  ]
+}
