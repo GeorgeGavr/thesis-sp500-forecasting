@@ -66,18 +66,24 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # Volatility of volatility (Detects regime changes)
     df['vol_of_vol'] = df['volatility_20'].rolling(window=20).std()
 
-    # 5. CLASSIFICATION-SPECIFIC FEATURES (The Level-Up)
+    # 5. VOLUME INDICATOR
+    # Log-volume change: stationary alternative to raw volume level.
+    # Raw volume is a non-stationary level series; the log-ratio is stationary
+    # and captures volume momentum — a meaningful signal for directional moves.
+    df['volume_change'] = np.log(df['Volume'] / df['Volume'].shift(1))
+
+    # 6. CLASSIFICATION-SPECIFIC FEATURES (The Level-Up)
     # Consecutive Up/Down Days (Streak)
     direction = np.sign(returns).fillna(0)
     streak = direction.groupby((direction != direction.shift()).cumsum()).cumsum()
     # Cap streaks at +/- 5 to prevent extreme outliers
     df['return_streak'] = streak.clip(-5, 5) / 5.0  
 
-    # 6. TEMPORAL FEATURES
+    # 7. TEMPORAL FEATURES
     df['day_of_week'] = df['Date'].dt.dayofweek / 4.0  # 0 to 1 (Mon-Fri)
     df['month'] = (df['Date'].dt.month - 1) / 11.0     # 0 to 1 (Jan-Dec)
 
-    # 7. AUTOREGRESSIVE LAGGED FEATURES
+    # 8. AUTOREGRESSIVE LAGGED FEATURES
     for lag in [1, 2, 3, 5]:
         df[f'return_lag_{lag}'] = returns.shift(lag)
 
@@ -122,11 +128,15 @@ def main():
     # 5. Create Binary Target (Predicting Tomorrow)
     print("\nCreating Shifted Binary Target Variable...")
     # If tomorrow's log return is > 0, today's target is 1. Else 0.
-    df['target'] = (df['log_return'].shift(-1) > 0).astype(float)
+    #df['target'] = (df['log_return'].shift(-1) > 0).astype(float)
+    #df['target'] = (df['log_return'].rolling(5).sum().shift(-5) > 0).astype(float)
+    df['target'] = (df['log_return'].rolling(5).sum().shift(-5) <= 0).astype(float)
+
 
     # 6. Clean and Save
     original_len = len(df)
-    df_clean = df.dropna().reset_index(drop=True)
+    df_clean = df.replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop=True)
+
     
     print(f"\nDropped {original_len - len(df_clean)} rows due to indicator warmup & shifting.")
     print(f"Final usable dataset size: {len(df_clean)} days.")

@@ -2,6 +2,7 @@
 Evaluation Script for S&P 500 Directional Forecasting
 Generates thesis-ready metrics and an academic suite of plots.
 Auto-detects hardware with seamless CPU fallback.
+Loads optimal threshold saved by train_classifier.py.
 """
 
 import os
@@ -13,7 +14,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
                              f1_score, confusion_matrix, roc_curve, auc, 
-                             precision_recall_curve, average_precision_score)
+                             precision_recall_curve, average_precision_score,
+                             matthews_corrcoef)
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -52,7 +54,7 @@ class Attention(nn.Module):
         return context, attn_weights
 
 class SP500Classifier(nn.Module):
-    def __init__(self, input_dim, hidden_dim=32, num_layers=2, dropout=0.3):
+    def __init__(self, input_dim, hidden_dim=64, num_layers=2, dropout=0.3):
         super(SP500Classifier, self).__init__()
         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True, dropout=dropout, bidirectional=True)
         self.attention = Attention(hidden_dim * 2)
@@ -94,7 +96,7 @@ def main():
     
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     feature_cols = checkpoint['feature_cols']
-    seq_len = 10 
+    seq_len = checkpoint['seq_len']
     
     # 2. Initialize Model
     try:
@@ -118,17 +120,16 @@ def main():
     targets = df['target'].values
     
     n = len(df)
-    train_end = int(n * 0.8)
     val_end = int(n * 0.9)
     
-    test_features = features[val_end - seq_len:] 
+    test_features = features[val_end - seq_len:]
     test_targets = targets[val_end - seq_len:]
     test_features = (test_features - checkpoint['scaler_mean']) / checkpoint['scaler_scale']
     
     X_test, y_test = create_sequences(test_features, test_targets, seq_len)
     X_test_tensor = torch.FloatTensor(X_test).to(device)
     
-    # 4. Generate Predictions & Dynamic Thresholding
+    # 4. Generate Predictions
     print("Generating predictions...")
     with torch.no_grad():
         logits = model(X_test_tensor)
@@ -136,26 +137,33 @@ def main():
     
     y_test = y_test.astype(int)
 
-    # --- THE MEDIAN THRESHOLD ---
-    # Force the threshold to the exact middle of the model's predictions
-    # This prevents the model from defaulting to the majority class.
-    best_threshold = float(np.median(probs))
-    print(f"\nForcing Threshold to Median Probability: {best_threshold:.4f}")
-    
-    # Apply the threshold
-    preds = (probs > best_threshold).astype(int)
-    
+    # --- Load threshold from checkpoint (set by train_classifier.py on validation set) ---
+    if 'best_threshold' in checkpoint:
+        best_threshold = checkpoint['best_threshold']
+        print(f"\nUsing Validation-Optimised Threshold: {best_threshold:.4f}")
+    else:
+        best_threshold = float(np.median(probs))
+        print(f"\n[!] No saved threshold found. Falling back to Median: {best_threshold:.4f}")
+        print("    Re-run train_classifier.py to generate a proper threshold.")
+        
+
+    # Contrarian threshold: model inversely correlates with 5-day forward return.
+    #preds = (probs > best_threshold).astype(int)
+    preds = (probs <= best_threshold).astype(int)
+
     # 5. Calculate Metrics
     acc = accuracy_score(y_test, preds)
     prec = precision_score(y_test, preds, zero_division=0)
     rec = recall_score(y_test, preds, zero_division=0)
     f1 = f1_score(y_test, preds, zero_division=0)
+    mcc = matthews_corrcoef(y_test, preds)
     
     print("\n--- TEST SET METRICS ---")
     print(f"Accuracy:  {acc*100:.2f}%")
     print(f"Precision: {prec*100:.2f}%")
     print(f"Recall:    {rec*100:.2f}%")
     print(f"F1 Score:  {f1*100:.2f}%")
+    print(f"MCC:       {mcc:.4f}")
     
     # ==========================================
     # 6. THESIS PLOT GENERATION
@@ -218,6 +226,9 @@ def main():
 
     print(f"✓ 4 High-Resolution plots saved to: {plots_dir}")
     print("="*60)
+    
+    print(f"\n--- SUMMARY FOR MULTI-RUN REPORTING ---")
+    print(f"Acc={acc*100:.2f}% | Prec={prec*100:.2f}% | Rec={rec*100:.2f}% | F1={f1*100:.2f}% | MCC={mcc:.4f} | AUC={roc_auc:.4f}")
 
 if __name__ == "__main__":
     main()

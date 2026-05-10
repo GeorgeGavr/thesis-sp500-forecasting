@@ -8,6 +8,7 @@ This script:
 3. Builds a Bidirectional LSTM with an Attention mechanism.
 4. Trains using BCEWithLogitsLoss (Binary Classification) with Class Weights.
 5. Auto-detects and rigorously tests hardware, with seamless CPU fallback.
+6. Finds optimal classification threshold on validation set and saves it.
 """
 
 import os
@@ -17,8 +18,13 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import f1_score as f1_metric, matthews_corrcoef
 import warnings
 warnings.filterwarnings('ignore')
+
+
+#torch.manual_seed(0)
+#np.random.seed(0)
 
 # --- 1. HARDWARE AUTO-DETECTION ---
 def get_device():
@@ -60,8 +66,7 @@ class Attention(nn.Module):
         return context, attn_weights
 
 class SP500Classifier(nn.Module):
-    # Reduced hidden_dim to 32 to prevent overfitting
-    def __init__(self, input_dim, hidden_dim=32, num_layers=2, dropout=0.3):
+    def __init__(self, input_dim, hidden_dim=64, num_layers=2, dropout=0.3):
         super(SP500Classifier, self).__init__()
         
         self.lstm = nn.LSTM(
@@ -122,6 +127,12 @@ def main():
     features = df[feature_cols].values
     targets = df['target'].values
     
+    # Safety guard: replace any inf/-inf that slipped through the pipeline
+    inf_count = np.isinf(features).sum()
+    if inf_count > 0:
+        print(f"[!] Warning: Found {inf_count} inf values in features. Replacing with NaN and forward-filling.")
+        features = pd.DataFrame(features, columns=feature_cols).replace([np.inf, -np.inf], np.nan).ffill().bfill().values
+    
     print(f"Loaded {len(df)} days of data. Using {len(feature_cols)} features.")
 
     # 2. Chronological Split (80% / 10% / 10%)
@@ -134,9 +145,11 @@ def main():
     features[:train_end] = scaler.fit_transform(features[:train_end])
     features[train_end:val_end] = scaler.transform(features[train_end:val_end])
     features[val_end:] = scaler.transform(features[val_end:])
+    features = np.clip(features, -3, 3)
+
 
     # 4. Create Sequences
-    seq_len = 10 
+    seq_len = 20
     X, y = create_sequences(features, targets, seq_len)
     
     X_train, y_train = X[:train_end-seq_len], y[:train_end-seq_len]
@@ -164,24 +177,27 @@ def main():
         else:
             raise e
 
-    # --- THE FIX: Class Weights to stop 100% Recall on "Up" days ---
+    # --- Class Weights to stop 100% Recall on "Up" days ---
     y_train_tensor = torch.FloatTensor(y_train)
     num_pos = y_train_tensor.sum()
     num_neg = len(y_train_tensor) - num_pos
     
-    # Calculate the weight for the positive class
     pos_weight = (num_neg / num_pos).to(device)
     print(f"\nApplying Class Weight: {pos_weight:.4f} to penalize 'always guessing Up'")
 
-    # Pass the weight into the loss function
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight) 
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     
-    # Optimizer (Removed weight_decay to preserve LSTM memory)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=5
+    )
     
     # 6. Training Loop with Early Stopping
     epochs = 100
-    patience = 15
+    patience = 20
     best_val_loss = float('inf')
     patience_counter = 0
     
@@ -198,6 +214,7 @@ def main():
             loss = loss_fn(predictions, yb)
             
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             train_loss += loss.item()
             
@@ -223,6 +240,7 @@ def main():
                 
         val_loss /= len(val_loader)
         val_acc = correct / total
+        scheduler.step(val_loss)
         
         if epoch % 5 == 0 or epoch == 1:
             print(f"Epoch {epoch:03d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc*100:.2f}%")
@@ -244,7 +262,61 @@ def main():
                 print(f"\nEarly stopping triggered at epoch {epoch}. Best Val Loss: {best_val_loss:.4f}")
                 break
 
-    print("\n✓ Training Complete. Best model saved to models/sp500_lstm_classifier.pt")
+    print("\n✓ Training Complete. Best model saved.")
+    print("="*60)
+
+    # --- 7. Find Optimal Threshold on Validation Set ---
+    # Load the best saved model (not the last epoch)
+    print("\nFinding optimal classification threshold on validation set...")
+    checkpoint = torch.load(
+        os.path.join(models_dir, "sp500_lstm_classifier.pt"),
+        map_location=device,
+        weights_only=False
+    )
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+
+    val_probs = []
+    val_true = []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            xb = xb.to(device)
+            logits = model(xb)
+            val_probs.extend(torch.sigmoid(logits).cpu().numpy())
+            val_true.extend(yb.numpy())
+
+    val_probs = np.array(val_probs)
+    val_true = np.array(val_true).astype(int)
+    
+    #thresholds = np.linspace(val_probs.min(), val_probs.max(), 41)
+    #best_t = max(
+        #thresholds,
+        #key=lambda t: matthews_corrcoef(val_true, (val_probs > t).astype(int))
+    #)
+    
+    #thresholds = np.linspace(val_probs.min(), val_probs.max(), 41)
+    #best_t = max(
+        #thresholds,
+        #key=lambda t: matthews_corrcoef(val_true, (val_probs <= t).astype(int))
+    #)
+    
+    thresholds = np.linspace(val_probs.min(), val_probs.max(), 41)
+    best_t = max(
+        thresholds,
+        key=lambda t: matthews_corrcoef(val_true, (val_probs > t).astype(int))
+    )
+
+    #thresholds = np.linspace(val_probs.min(), val_probs.max(), 41)
+    #best_t = max(
+        #thresholds,
+        #key=lambda t: f1_metric(val_true, (val_probs > t).astype(int), zero_division=0)
+    #)
+    print(f"Optimal threshold from validation set: {best_t:.4f}")
+
+    # Re-save checkpoint with threshold included
+    checkpoint['best_threshold'] = float(best_t)
+    torch.save(checkpoint, os.path.join(models_dir, "sp500_lstm_classifier.pt"))
+    print("✓ Threshold saved to checkpoint. Run evaluate.py next.")
     print("="*60)
 
 if __name__ == "__main__":
