@@ -27,6 +27,7 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+data/**/*.csv
 
 # Unit test / coverage reports
 .pytest_cache/
