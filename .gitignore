@@ -27,7 +27,10 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
-data/**/*.csv
+data/**/*.csv# Μοντέλα και ενδιάμεσα αποτελέσματα
+models/*.pt
+!models/return_dist/
+results/plots/run_*/
 
 # Unit test / coverage reports
 .pytest_cache/
@@ -44,3 +47,8 @@ htmlcov/
 
 # Development documentation (local only)
 DEVELOPMENT_SUMMARY.md
+
+# Μοντέλα και ενδιάμεσα αποτελέσματα
+models/*.pt
+!models/return_dist/
+results/plots/run_*/
